@@ -1,0 +1,17 @@
+{
+  "name": "web-sql-sync",
+  "description": "Sync a local WebSQL DB (SQLite) with a server.",
+  "main": "index.js",
+  "authors": [
+    "Jose M. Mateos"
+  ],
+  "license": "MIT",
+  "homepage": "",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}
