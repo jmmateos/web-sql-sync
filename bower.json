@@ -6,7 +6,7 @@
     "Jose M. Mateos"
   ],
   "license": "MIT",
-  "homepage": "",
+  "homepage": "https://github.com/jmmateos/web-sql-sync",
   "ignore": [
     "**/.*",
     "node_modules",
