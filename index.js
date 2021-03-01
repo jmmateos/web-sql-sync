@@ -154,39 +154,47 @@
         syncNow: function(callBackProgress, callBackEndSync, modelsToSync, saveBandwidth) {
 
             var self = this, modelsToBackup = [];
-            if (this.db === null) {
-                self.log('You should call the initSync before (db is null)');
-                throw 'You should call the initSync before (db is null)';
-            }
-            if (modelsToSync) {
-            modelsToBackup = this.checkModelsList(modelsToSync);
-            } else {
-            for (var cont = 0; cont < self.tablesToSync.length; cont++) {
-                modelsToBackup.push(self.tablesToSync[cont].tableName);
-            }
-            }
-            if (self.syncResult !== null) {
-                callBackEndSync({syncOK: false, codeStr: 'syncInProgress',
-                message: 'synchronization in process', nbSent : 0, nbUpdated:0, nbDeleted:0});
-                return 0;
-            } else {
-                self.syncResult = {syncOK: false, codeStr: 'noSync', message: 'No Sync yet',
-                    nbSent : 0, nbUpdated:0, nbDeleted:0};
-                //self.syncResult.models = {pendiente = [], completado = []};
-            }
+            try {            
+                if (this.db === null) {
+                    self.log('You should call the initSync before (db is null)');
+                    throw 'You should call the initSync before (db is null)';
+                }
+                if (modelsToSync) {
+                modelsToBackup = this.checkModelsList(modelsToSync);
+                } else {
+                for (var cont = 0; cont < self.tablesToSync.length; cont++) {
+                    modelsToBackup.push(self.tablesToSync[cont].tableName);
+                }
+                }
+                if (self.syncResult !== null) {
+                    callBackEndSync({syncOK: false, codeStr: 'syncInProgress',
+                    message: 'synchronization in process', nbSent : 0, nbUpdated:0, nbDeleted:0});
+                    return 0;
+                } else {
+                    self.syncResult = {syncOK: false, codeStr: 'noSync', message: 'No Sync yet',
+                        nbSent : 0, nbUpdated:0, nbDeleted:0};
+                    //self.syncResult.models = {pendiente = [], completado = []};
+                }
 
-            self.cbEndSync = function() {
-                callBackProgress(self.syncResult.message, 100, self.syncResult.codeStr);
-                var resultado = self.syncResult;
+                self.cbEndSync = function() {
+                    callBackProgress(self.syncResult.message, 100, self.syncResult.codeStr);
+                    var resultado = self.syncResult;
+                    self.syncResult = null;
+                    callBackEndSync(resultado);
+                };
+
+                callBackProgress('Getting local data to backup', 0, 'getData');
+
+                self.syncDate = Math.round(new Date().getTime()/1000.0);
+                self.firstSyncDate = 0;
+                self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
+            } catch (error) {
+                var resultado = {syncOK: false, codeStr: 'noSync', message: 'No Sync yet',
+                nbSent : 0, nbUpdated:0, nbDeleted:0};
+                resultado.message = error.message;
                 self.syncResult = null;
                 callBackEndSync(resultado);
-            };
-
-            callBackProgress('Getting local data to backup', 0, 'getData');
-
-            self.syncDate = Math.round(new Date().getTime()/1000.0);
-            self.firstSyncDate = 0;
-            self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
+            }
 
         },
 
