@@ -84,11 +84,11 @@
             if (self.isRunning()) return 1;
             else {
                 sql = 'select count(*) from delete_elem';
-                self._selectSql(sql, null, function (data) {
+                self._selectSql(sql, [], null, function (data) {
                     if (data[0] > 0) callResult(1);
                     else {
                     sql = 'select count(*) from new_elem';
-                    self._selectSql(sql, null, function (data) {
+                    self._selectSql(sql, [], null, function (data) {
                             if (data[0] > 0) callResult(1);
                             else callResult(0);
                         });
