@@ -10,8 +10,8 @@
          root.DBSYNC = factory();
      }
  }(this, function () {
- 
-    var DBSYNC = {    
+
+    var DBSYNC = {
         serverUrl: null,
         sizeMax: 1048576,
         segmento: 1000,
@@ -23,8 +23,9 @@
         },
         syncResult: null,
         SqlTranError: null,
-        firstSync: false,
+        firstSync: {},
         firstSyncDate : 0,
+        keyStr: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
         cbEndSync: null,
         clientData: null,
         serverData: null,
@@ -66,7 +67,8 @@
             }
             if (this.sizeMax) {
                 this.syncInfo.sizeMax = this.sizeMax;
-            }   
+            }
+            this.syncInfo.lastSyncDate = {};
             this.init(callBack);
         },
 
@@ -104,7 +106,7 @@
                 throw new Error(tableName + ' not found.');
                 }
             } else {
-                let arrLastSyncDate = Object.values(this.syncInfo.lastSyncDate);
+                let arrLastSyncDate = this._getObjectValues(this.syncInfo.lastSyncDate);
                 arrLastSyncDate = arrLastSyncDate.filter(function (elem) { if (elem !== 0) { return elem; } });
                 if (arrLastSyncDate.length === 0) {
                 return 0;
@@ -125,10 +127,15 @@
             }
         },
 
+        authBasic: function (username, password) {
+          this.username = username;
+          this.password = password;
+        },
+
         log: function(message) {
             console.log(message);
         },
-        
+
         logSql: function(message) {
             console.log(message);
         },
@@ -141,7 +148,7 @@
          *
          * @param {function} callBackProgress
          * @param {function} callBackEnd (result.syncOK, result.message).
-         * @param {string | string[]} modelsToSync: models to synchronize. 
+         * @param {string | string[]} modelsToSync: models to synchronize.
          * @param {boolean} saveBandwidth (default false): if true, the client will not send a request to the server if there is no local changes
         */
         syncNow: function(callBackProgress, callBackEndSync, modelsToSync, saveBandwidth) {
@@ -181,7 +188,7 @@
             self.firstSyncDate = 0;
             self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
 
-        },    
+        },
 
 
         /******* PRIVATE FUNCTIONS  ******************/
@@ -243,7 +250,7 @@
                 callBack();
             });
         },
-        
+
         _syncNowGo: function(modelsToBck, callBackProgress, saveBandwidth) {
             var self = this;
             self._getDataToBackup(modelsToBck, function (data) {
@@ -302,8 +309,8 @@
                         var callFinishUpdate =  (table, method, sqlTableErrs) => {
                             if (sqlTableErrs) { sqlErrs = sqlErrs.concat(sqlTableErrs); }
                             counterNbTable++;
-                            var perProgress = this._progressRatio(counterNbTable, nbTables, nbTablesPdte);
-                            this.log(table.tableName + ' finish,  percent: ' + perProgress.toString());
+                            var perProgress = self._progressRatio(counterNbTable, nbTables, nbTablesPdte);
+                            self.log(table.tableName + ' finish,  percent: ' + perProgress.toString());
                             callBackProgress(table.tableName, perProgress, method);
                             if (counterNbTable === nbTables) {
                             if (sqlErrs.length > 0) {
@@ -329,10 +336,10 @@
                             }
                         };
                         serverData.models.completado.forEach(function(tableName) {
-                            var table = this._getTableToProcess(tableName);
+                            var table = self._getTableToProcess(tableName);
                             var currData = serverData.data[table.tableName] || [];
                             var deleData = serverData.data.delete_elem[table.tableName] || [];
-                            if (this.firstSync[table.tableName]) {
+                            if (self.firstSync[table.tableName]) {
                             self._updateFirstLocalDb({ table: table, currData: currData }, callFinishUpdate);
                             } else {
                             self._updateLocalDb({ table: table, currData: currData, deleData: deleData }, callFinishUpdate);
@@ -370,7 +377,7 @@
                 }
                 });
             }); // end for each
-        
+
             }, function (err) {
             self.log('TransactionError: _getDataToBackup');
             self._errorHandler(undefined , err);
@@ -386,7 +393,7 @@
             self._executeSql('UPDATE sync_info SET last_sync = ? where  table_name = ?', [syncDate, tableName], tx);
             // Remove only the elem sent to the server (in case new_elem has been added during the sync)
             // We don't do that anymore: this._executeSql('DELETE FROM new_elem', [], tx);
-        
+
             if (self.clientData.data.hasOwnProperty(tableName)) {
                 var idsNewToDelete = [];
                 var idsDelToDelete = [];
@@ -405,7 +412,7 @@
                     ' AND id IN (' + idsString + ')' +
                     ' AND change_time <= ' + syncDate, idsNewToDelete, tx);
                 }
-        
+
                 if (idsDelToDelete.length > 0) {
                 idsString = idsDelToDelete.map(function(x) { return '?'; }).join(',');
                 self._executeSql('DELETE FROM delete_elem WHERE table_name =\'' +tableName + '\'' +
@@ -467,18 +474,18 @@
                     ' UNION ALL ' +
                     'select DISTINCT id FROM delete_elem ' +
                     ' WHERE table_name = ? AND id = ? AND change_time > ?';
-        
+
                 self._selectSql(sql, [tableName, idValue, this.syncDate, tableName, idValue, this.syncDate], tx,
                 function(exists) {
                     if (exists.length) { callBack(true); } else { callBack(false); }
                 });
             } else {
             callBack(false);
-            }  
+            }
         },
         _updateRecord: function (tableName, idName, reg, tx, callBack) {
             var sql, self = this;
-        
+
             this._detectConflict(tableName, reg[idName], tx, function (exists) {
                 if (!exists) {
                     /*ex : UPDATE "tableName" SET colonne 1 = [valeur 1], colonne 2 = [valeur 2]*/
@@ -492,7 +499,7 @@
                             'table_name = ? AND id = ? AND ' +
                             'change_time = (select MAX(change_time) FROM new_elem  ' +
                             'WHERE table_name = ?  AND id = ?) ';
-        
+
                         self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName] ], tx,
                         function() {
                             //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Updated});
@@ -503,7 +510,7 @@
                             callBack(error);
                         });
                     });
-        
+
                 } else {  // send conflict to server
                 callBack();
                 self._sendConflict(tableName, idName, reg, tx);
@@ -521,15 +528,15 @@
             counterNbElm += nb;
             this.log('There are ' + nb.toString() + ' new or modified elements and ' + nbDel.toString() + ' deleted, in the table ' + table.tableName + ' to save in the local DB.');
             var counterNbElmTab = 0;
-        
+
             var callOperation = function(err) {
-            counterNbElmTab++;
-            if (err) { sqlErrs.push(err); }
-            if (counterNbElmTab === nb ) {
-                self._finishSync(table.tableName, this.serverData.syncDate);
-            }
+              counterNbElmTab++;
+              if (err) { sqlErrs.push(err); }
+              if (counterNbElmTab === nb ) {
+                  self._finishSync(table.tableName, self.serverData.syncDate);
+              }
             };
-        
+
             this.db.transaction(function(tx) {
             self._deleteTableLocalDb (table.tableName, table.idName, deleData, tx, function () {
                 var listIdToCheck = [];
@@ -541,13 +548,13 @@
                     var curr;
                     for (var i = 0; i < nb; i++) {
                     curr = currData[i];
-        
+
                     if (idInDb.indexOf(curr[table.idName]) !== -1) {// update
                         self._updateRecord(table.tableName, table.idName, curr, tx, callOperation);
                     } else {// insert
                         self._insertRecord(table.tableName, table.idName, curr, tx, callOperation);
                     }
-        
+
                     } // end for
                 }); // end getExisting Id
                 } else  { self._finishSync(table.tableName, self.serverData.syncDate); }
@@ -569,7 +576,7 @@
             var nb = currData.length;
             counterNbElm += nb;
             this.log('There are ' + nb + ' new elements, in the table ' + table.tableName + ' to save in the local DB');
-        
+
             var counterNbElmTab = 0;
             this.db.transaction ( function (tx)  {
             if (nb !== 0) {
@@ -592,15 +599,15 @@
             self.syncResult.nbUpdated += counterNbElmTab;
             if (sqlErrs.length === 0) { callBack(table, 'updateFirstLocalDb'); }  else { callBack(table, 'updateFirstLocalDb', sqlErrs); }
             });
-        
+
         },
         _insertRecord: function(tableName, idName, reg, tx, callBack) {
             var sql, self = this;
-        
+
             this._detectConflict(tableName, reg[idName], tx,
             function(exists)  {
                 if (!exists) {
-        
+
                     // 'ex INSERT INTO tablename (id, name, type, etc) VALUES (?, ?, ?, ?);'
                     var attList = self._getAttributesList(tableName, reg);
                     sql = self._buildInsertSQL(tableName, reg, attList);
@@ -611,7 +618,7 @@
                                 'table_name = ? AND id = ? AND ' +
                                 'change_time = (select MAX(change_time) FROM new_elem WHERE ' +
                                 'table_name = ? AND id = ?) ';
-        
+
                             self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName]], tx,
                             function() {
                                 //this.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
@@ -639,7 +646,7 @@
         },
         _sendConflict: function(tableName, idName, reg, tx) {
             var self = this, sql;
-        
+
             sql = 'select * FROM ' + tableName + ' WHERE ' + idName + ' = ?';
             self._selectSql(sql, [reg[idName]], tx, function (regloc) {
                 var dataToSend = {
@@ -661,7 +668,7 @@
             if (typeof rs.rows === 'undefined') {
                 return elms;
             }
-        
+
             for (var i = 0, ObjKeys; i < rs.rows.length; ++i) {
                 ObjKeys = Object.keys(rs.rows.item(i));
                 if (ObjKeys.length === 1 ) {
@@ -673,7 +680,7 @@
             return elms;
         },
         _deleteTableLocalDb: function(tablename, idName, listIdToDelete, tx, callBack) {
-            var listIds = [], orden = 0;
+            var listIds = [], self = this, orden = 0;
             if (listIdToDelete.length === 0) {
                 callBack(true);
             } else {
@@ -689,7 +696,7 @@
                 );
 
                 listIds.map(function(listIdsDel, ix, list) {
-                    this._deleteParcialTableLocalDb(tablename, idName, listIdsDel, tx,function () {
+                  self._deleteParcialTableLocalDb(tablename, idName, listIdsDel, tx,function () {
                         if (++orden === list.length) { callBack(true); }
                     });
                 });
@@ -698,7 +705,7 @@
         _deleteParcialTableLocalDb: function(tablename, idName, listIdToDelete, tx, callBack) {
             var self = this;
 
-            var  sql = 'delete from ' + tablename + ' WHERE ' + idName + ' IN (' + 
+            var  sql = 'delete from ' + tablename + ' WHERE ' + idName + ' IN (' +
                 listIdToDelete.map(function (x) { return '?'; }).join(',') + ')';
             this._executeSql(sql, listIdToDelete, tx, function()  {
                 sql = 'delete from delete_elem WHERE table_name = "' + tablename +'" and id  IN (' +
@@ -714,6 +721,7 @@
             });
         },
         _getIdExitingInDB: function(tableName, idName, listIdToCheck, tx, dataCallBack) {
+            var self = this;
             var listIds = [], idsInDb = [];
             var orden = 0;
             if (listIdToCheck.length === 0) {
@@ -731,7 +739,7 @@
                 );
 
                 listIds.map(function(listIdsCheck, ix, list) {
-                    this._getParcialIdExitingInDB(tableName, idName, listIdsCheck, tx, function (idsFind) {
+                  self._getParcialIdExitingInDB(tableName, idName, listIdsCheck, tx, function (idsFind) {
                         idsInDb = idsInDb.concat(idsFind);
                         if (++orden === list.length) {
                             dataCallBack(idsInDb);
@@ -741,7 +749,7 @@
             }
         },
         _getParcialIdExitingInDB: function(tableName, idName, listIdToCheck, tx, dataCallBack ) {
-            var sql = 'select ' + idName + ' FROM ' + tableName + ' WHERE ' + idName + ' IN (' + 
+            var sql = 'select ' + idName + ' FROM ' + tableName + ' WHERE ' + idName + ' IN (' +
                 listIdToCheck.map(function (x) { return '?'; }).join(',') + ')';
             this._selectSql(sql, listIdToCheck, tx, function (idsFind)  {
                 dataCallBack(idsFind);
@@ -749,26 +757,27 @@
         },
         _executeSqlBridge: function(tx, sql, params, dataHandler, errorHandler) {
             // Standard WebSQL
+            var self = this;
             tx.executeSql(sql, params, dataHandler,
                 function(transaction, error)  {
-                    this.log('sql error: ' + sql);
-                    this.SqlTranError = {message: error.message, code: error.code, sql: sql};
-                    return errorHandler(transaction, error);
+                  self.log('sql error: ' + sql);
+                  self.SqlTranError = {message: error.message, code: error.code, sql: sql};
+                  return errorHandler(transaction, error);
                 }
             );
         },
         _executeSql: function(sql, params, optionalTransaction, optionalCallBack, optionalErrorHandler) {
             var self = this;
             if (params) {
-                this.logSql(`_executeSql: ${sql} with param ${params.join(',')}`);
+                this.logSql('_executeSql: ' + sql + ' with param ' + params.join(','));
             } else {
-                this.logSql(`_executeSql: ${sql}`);
+                this.logSql('_executeSql: ' + sql);
             }
             if (!optionalCallBack) {
                 optionalCallBack = self._defaultCallBack;
             }
             if (!optionalErrorHandler) {
-                optionalErrorHandler = this._errorHandler;
+                optionalErrorHandler = this._errorHandler.bind(this);
             }
             if (optionalTransaction) {
                 this._executeSqlBridge(optionalTransaction, sql, params || [], optionalCallBack, optionalErrorHandler);
@@ -811,7 +820,7 @@
             sql += members.map(function (x) { return '?'; }).join(',');
             sql += ')';
             return sql;
-        }, 
+        },
         _buildUpdateSQL: function(tableName, objToUpdate, attrList) {
             /*ex UPDATE "nom de table" SET colonne 1 = [valeur 1], colonne 2 = [valeur 2] WHERE {condition}*/
             var members;
@@ -823,7 +832,7 @@
             if (members.length === 0) {
                 throw new Error('buildUpdateSQL : Error, try to insert an empty object in the table ' + tableName);
             }
-        
+
             var nb = members.length;
             for (var i = 0; i < nb; i++) {
                 sql += '"' + members[i] + '" = ?';
@@ -831,7 +840,7 @@
                     sql += ', ';
                 }
             }
-        
+
             return sql;
         },
         _replaceAll: function(value, search, replacement) {
@@ -847,6 +856,11 @@
             memberArray.push(obj[member]);
             });
             return memberArray;
+        },
+        _getObjectValues: function (obj) {
+          var values = [];
+          for (var elem in obj) { values.push(obj[elem]); }
+          return values;
         },
         _getAttributesList: function(tableName, obj, check) {
             var memberArray = [];
@@ -871,11 +885,11 @@
         },
         _sendDataToServer: function(dataToSync, callBack) {
             var self = this;
-        
+
             var XHR = new XMLHttpRequest();
             var data = JSON.stringify(dataToSync);
             XHR.overrideMimeType('application/json;charset=UTF-8');
-        
+
             if (self.username !== null && self.password !== null &&
                 self.username !== undefined && self.password !== undefined ) {
                 XHR.open('POST', self.serverUrl, true);
@@ -883,7 +897,7 @@
             } else {
                 XHR.open('POST', self.serverUrl, true);
             }
-        
+
             XHR.setRequestHeader('Content-type', 'application/json; charset=utf-8');
             XHR.onreadystatechange = function()  {
                 var serverAnswer;
@@ -921,7 +935,7 @@
                     }
                 }
             };
-        
+
             XHR.ontimeout = function() {
                 var serverAnswer = {
                     result : 'ERROR',
@@ -935,25 +949,25 @@
                 };
                 callBack(serverAnswer);
             };
-        
+
             XHR.send(data);
         },
         _sendConflictToServer: function(dataConflic) {
             var self = this;
-        
+
             var XHR = new XMLHttpRequest();
             var data = JSON.stringify(dataConflic);
             XHR.overrideMimeType('application/json;charset=UTF-8');
             XHR.timeout = 60000;
             XHR.setRequestHeader('Content-type', 'application/json; charset=utf-8');
-        
+
             if (self.username !== null && self.password !== null && self.username !== undefined && self.password !== undefined ) {
             XHR.open('POST', self.serverUrl.replace('sync', 'conflict'), true);
             XHR.setRequestHeader('Authorization', 'Basic ' + self._encodeBase64(self.username + ':' + self.password));
             } else {
             XHR.open('POST', self.serverUrl.replace('sync', 'conflict'), true);
             }
-        
+
             XHR.onreadystatechange =  () => {
                 var serverAnswer;
                 if (4 === XHR.readyState) {
@@ -974,13 +988,13 @@
                     }
                 }
             };
-        
+
             XHR.ontimeout = () => {
                 self.log('Server conflict timeout. ');
             };
-        
+
             XHR.send(data);
-        
+
         },
         _columnExists: function(table, column, optionalTransaction, callback) {
             var self = this;
@@ -1016,11 +1030,11 @@
             // tslint:disable-next-line:one-variable-per-declaration
             var chr1, chr2, chr3, enc1, enc2, enc3, enc4;
             var i = 0;
-        
+
             input = this._utf8_encode(input);
-        
+
             while (i < input.length) {
-        
+
                 chr1 = input.charCodeAt(i++);
                 chr2 = input.charCodeAt(i++);
                 chr3 = input.charCodeAt(i++);
@@ -1035,21 +1049,21 @@
                 } else if (isNaN(chr3)) {
                     enc4 = 64;
                 }
-        
+
                 output = output +
                 this.keyStr.charAt(enc1) + this.keyStr.charAt(enc2) +
                 this.keyStr.charAt(enc3) + this.keyStr.charAt(enc4);
-        
+
             }
-        
+
             return output;
         },
         _utf8_encode: function(input) {
             input = input.replace(/\r\n/g, '\n');
             var utftext = '';
-        
+
             for (var n = 0; n < input.length; n++) {
-        
+
                 var c = input.charCodeAt(n);
                 // tslint:disable:no-bitwise
                 if (c < 128) {
@@ -1064,9 +1078,9 @@
                 }
                 // tslint:enable:no-bitwise
             }
-        
+
             return utftext;
         }
-    };    
+    };
     return DBSYNC;
-}));    
+}));
