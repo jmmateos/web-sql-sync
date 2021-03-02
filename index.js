@@ -395,7 +395,7 @@
         },
         _finishSync: function (tableName, syncDate,  callBack) {
             var self = this;
-            this.firstSync = false;
+            this.firstSync[tableName] = false;
             this.db.transaction(function (tx) {
             self.syncInfo.lastSyncDate[tableName] = syncDate;
             self._executeSql('UPDATE sync_info SET last_sync = ? where  table_name = ?', [syncDate, tableName], tx);
