@@ -223,12 +223,12 @@
                 // create triggers to automatically fill the new_elem table (this table will contains a pointer to all the modified data)
                 self.tablesToSync.forEach(function(curr)  {
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS update_' + curr.tableName + '  AFTER UPDATE ON ' + curr.tableName + ' ' +
-                                'WHEN (SELECT last_sync FROM sync_info) > 0 ' +
+                                'WHEN (SELECT last_sync FROM sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
                                 'BEGIN INSERT INTO new_elem (table_name, id) VALUES ' +
                                 '("' + curr.tableName + '", new.' + curr.idName + '); END;', [], tx);
 
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS insert_' + curr.tableName + '  AFTER INSERT ON ' + curr.tableName + ' ' +
-                                'WHEN (SELECT last_sync FROM sync_info) > 0 ' +
+                                'WHEN (SELECT last_sync FROM sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
                                 'BEGIN INSERT INTO new_elem (table_name, id) VALUES ' +
                                 '("' + curr.tableName + '", new.' + curr.idName + '); END;', [], tx);
 
