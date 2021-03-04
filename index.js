@@ -154,7 +154,7 @@
         syncNow: function(callBackProgress, callBackEndSync, modelsToSync, saveBandwidth) {
 
             var self = this, modelsToBackup = [];
-            try {            
+            try {
                 if (this.db === null) {
                     self.log('You should call the initSync before (db is null)');
                     throw 'You should call the initSync before (db is null)';
@@ -393,10 +393,9 @@
             self.log('TransactionFinish: _getDataToBackup');
             });
         },
-        _finishSync: function (tableName, syncDate,  callBack) {
+        _finishSync: function (tableName, syncDate, tx) {
             var self = this;
             this.firstSync[tableName] = false;
-            this.db.transaction(function (tx) {
             self.syncInfo.lastSyncDate[tableName] = syncDate;
             self._executeSql('UPDATE sync_info SET last_sync = ? where  table_name = ?', [syncDate, tableName], tx);
             // Remove only the elem sent to the server (in case new_elem has been added during the sync)
@@ -428,16 +427,6 @@
                     ' AND change_time <= ' + syncDate, idsDelToDelete, tx);
                 }
             }
-            },function (err) {
-            self._errorHandler(undefined, err);
-            delete self.clientData.data[tableName]; // self.clientData = null;
-            delete self.serverData.data[tableName];  // self.serverData = null;
-            if (callBack) { callBack(); }
-            }, function () {
-            delete self.clientData.data[tableName]; // self.clientData = null;
-            delete self.serverData.data[tableName];  // self.serverData = null;
-            if (callBack) { callBack(); }
-            });
         },
         _getTableToProcess: function(tableName) {
             var result;
@@ -476,14 +465,14 @@
         },
         _detectConflict: function(tableName, idValue, tx, callBack)  {
             var sql, self = this;
-            if (!this.firstSync) {
+            if (!this.firstSync[tableName]) {
                 sql = 'select DISTINCT id FROM new_elem ' +
                     ' WHERE table_name = ?  AND id = ? AND change_time > ? ' +
                     ' UNION ALL ' +
                     'select DISTINCT id FROM delete_elem ' +
                     ' WHERE table_name = ? AND id = ? AND change_time > ?';
 
-                self._selectSql(sql, [tableName, idValue, this.syncDate, tableName, idValue, this.syncDate], tx,
+                self._selectSql(sql, [tableName, idValue, self.syncDate, tableName, idValue, self.syncDate], tx,
                 function(exists) {
                     if (exists.length) { callBack(true); } else { callBack(false); }
                 });
@@ -511,16 +500,16 @@
                         self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName] ], tx,
                         function() {
                             //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Updated});
-                            callBack();
+                            callBack(null, tx);
                         },
                         function(ts, error) {
                             self._errorHandler(ts, error);
-                            callBack(error);
+                            callBack(error, tx);
                         });
                     });
 
                 } else {  // send conflict to server
-                callBack();
+                callBack(null, tx);
                 self._sendConflict(tableName, idName, reg, tx);
                 }
             });
@@ -537,11 +526,11 @@
             this.log('There are ' + nb.toString() + ' new or modified elements and ' + nbDel.toString() + ' deleted, in the table ' + table.tableName + ' to save in the local DB.');
             var counterNbElmTab = 0;
 
-            var callOperation = function(err) {
+            var callOperation = function(err, tx) {
               counterNbElmTab++;
               if (err) { sqlErrs.push(err); }
               if (counterNbElmTab === nb ) {
-                  self._finishSync(table.tableName, self.serverData.syncDate);
+                  self._finishSync(table.tableName, self.serverData.syncDate, tx);
               }
             };
 
@@ -565,15 +554,19 @@
 
                     } // end for
                 }); // end getExisting Id
-                } else  { self._finishSync(table.tableName, self.serverData.syncDate); }
+                } else  { self._finishSync(table.tableName, self.serverData.syncDate, tx); }
             }); // end delete elements
             },function (err)  {
             self.log('TransactionError (' + table.tableName + '): ' + err.message);
             sqlErrs.push(err);
             self._errorHandler(undefined, err);
+            delete self.clientData.data[table.tableName]; // self.clientData = null;
+            delete self.serverData.data[table.tableName];  // self.serverData = null;
             callBack(table, 'updateLocalDb', sqlErrs);
             }, function()  {
-            if (sqlErrs.length === 0) { callBack(table, 'updateLocalDb'); } else { callBack(table, 'updateLocalDb', sqlErrs); }
+              delete self.clientData.data[table.tableName]; // self.clientData = null;
+              delete self.serverData.data[table.tableName];  // self.serverData = null;
+              if (sqlErrs.length === 0) { callBack(table, 'updateLocalDb'); } else { callBack(table, 'updateLocalDb', sqlErrs); }
             }); // end tx
         },
         _updateFirstLocalDb: function(serverData, callBack) {
@@ -593,7 +586,7 @@
                     counterNbElmTab++;
                     if (err) { sqlErrs.push(err); }
                     if (counterNbElmTab === nb) {
-                    self._finishSync(table.tableName, self.serverData.syncDate);
+                    self._finishSync(table.tableName, self.serverData.syncDate, tx);
                     }
                 });
                 }
@@ -616,11 +609,11 @@
             function(exists)  {
                 if (!exists) {
 
-                    // 'ex INSERT INTO tablename (id, name, type, etc) VALUES (?, ?, ?, ?);'
+                    // 'ex INSERT INTO tableName (id, name, type, etc) VALUES (?, ?, ?, ?);'
                     var attList = self._getAttributesList(tableName, reg);
                     sql = self._buildInsertSQL(tableName, reg, attList);
                     var attValue = self._getMembersValue(reg, attList);
-                    if (!self.firstSync) {
+                    if (!self.firstSync[tableName]) {
                         self._executeSql(sql, attValue, tx, () => {
                             sql = 'DELETE FROM new_elem WHERE ' +
                                 'table_name = ? AND id = ? AND ' +
@@ -629,26 +622,27 @@
 
                             self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName]], tx,
                             function() {
-                                //this.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
+                                //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
                                 callBack ();
                             });
                         }, function (ts, error)  {
                         self._errorHandler(ts, error);
-                        callBack(error);
+                        callBack(error, tx);
                         });
                     } else {
                         self._executeSql(sql, attValue, tx,
                         () => {
-                            //this.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
-                            callBack ();
+                            //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
+                            callBack (null, tx);
                         },
                         function(ts, error) {
                             self._errorHandler(ts, error);
-                            callBack(error);
+                            callBack(error, tx);
                         });
                     }
                 } else {  // send conflict to server
                     self._sendConflict(tableName, idName, reg, tx);
+                    callBack(null, tx);
                 }
             });
         },
@@ -687,7 +681,7 @@
             }
             return elms;
         },
-        _deleteTableLocalDb: function(tablename, idName, listIdToDelete, tx, callBack) {
+        _deleteTableLocalDb: function(tableName, idName, listIdToDelete, tx, callBack) {
             var listIds = [], self = this, orden = 0;
             if (listIdToDelete.length === 0) {
                 callBack(true);
@@ -704,25 +698,25 @@
                 );
 
                 listIds.map(function(listIdsDel, ix, list) {
-                  self._deleteParcialTableLocalDb(tablename, idName, listIdsDel, tx,function () {
+                  self._deleteParcialTableLocalDb(tableName, idName, listIdsDel, tx,function () {
                         if (++orden === list.length) { callBack(true); }
                     });
                 });
             }
         },
-        _deleteParcialTableLocalDb: function(tablename, idName, listIdToDelete, tx, callBack) {
+        _deleteParcialTableLocalDb: function(tableName, idName, listIdToDelete, tx, callBack) {
             var self = this;
 
-            var  sql = 'delete from ' + tablename + ' WHERE ' + idName + ' IN (' +
+            var  sql = 'delete from ' + tableName + ' WHERE ' + idName + ' IN (' +
                 listIdToDelete.map(function (x) { return '?'; }).join(',') + ')';
             this._executeSql(sql, listIdToDelete, tx, function()  {
-                sql = 'delete from delete_elem WHERE table_name = "' + tablename +'" and id  IN (' +
+                sql = 'delete from delete_elem WHERE table_name = "' + tableName +'" and id  IN (' +
                     listIdToDelete.map(function (x) { return '?'; }).join(',') + ')';
                 self._executeSql(sql, listIdToDelete, tx, function()  {
                     var reg = {};
                     listIdToDelete.forEach( function (x) {
                         reg[idName] = x;
-                        //self.dataObserver.next({table: tablename, record: reg, operation: DataOperation.Deleted});
+                        //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Deleted});
                     });
                     callBack(true);
                 });
