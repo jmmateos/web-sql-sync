@@ -83,12 +83,13 @@
             var self = this, sql = '';
             if (self.isRunning()) return 1;
             else {
-                sql = 'select count(*) from delete_elem';
-                self._selectSql(sql, [], null, function (data) {
+                var lastSync = this.getLastSyncDate();
+                sql = 'select count(*) from delete_elem where change_time >= ?';
+                self._selectSql(sql, [lastSync], null, function (data) {
                     if (data[0] > 0) callResult(1);
                     else {
-                    sql = 'select count(*) from new_elem';
-                    self._selectSql(sql, [], null, function (data) {
+                    sql = 'select count(*) from new_elem where change_time >= ?';
+                    self._selectSql(sql, [lastSync], null, function (data) {
                             if (data[0] > 0) callResult(1);
                             else callResult(0);
                         });
