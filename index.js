@@ -23,13 +23,13 @@
         },
         syncResult: null,
         SqlTranError: null,
-        firstSync: {},
+        firstSync: {}, // indicates if the table is empty, it is its first synchronization.
         firstSyncDate : 0,
         keyStr: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
         cbEndSync: null,
-        clientData: null,
-        serverData: null,
-        syncDate:null,
+        clientData: null, // data pending synchronization. Data that is sent to the server.
+        serverData: null, // data received from the server.
+        syncDate:null, // start of the synchronization process.
 
         username: null, // basic authentication support
         password: null, // basic authentication support
