@@ -5,6 +5,9 @@
   "authors": [
     "Jose M. Mateos"
   ],
+  "dependencies": {
+    "rxjs":"4.1.0"
+  },
   "license": "MIT",
   "homepage": "https://github.com/jmmateos/web-sql-sync",
   "ignore": [

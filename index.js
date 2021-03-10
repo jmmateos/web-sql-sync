@@ -4,12 +4,15 @@
  (function (root, factory) {
      if (typeof define === 'function' && define.amd) {
          // AMD. Register as an anonymous module.
-         define(factory);
+         define(['rx'], function (Rx) {
+          root.DBSYNC = factory(root, Rx);
+          return root.DBSYNC;
+        });
      } else {
          // Browser globals
-         root.DBSYNC = factory();
+         root.DBSYNC = factory(root, root.Rx );
      }
- }(this, function () {
+ }(this, function (global, Rx) {
 
     var DBSYNC = {
         serverUrl: null,
@@ -33,6 +36,8 @@
 
         username: null, // basic authentication support
         password: null, // basic authentication support
+
+        data$: null,  // Represents an object that is both an observable sequence as well as an observer.
 
         /*************** PUBLIC FUNCTIONS ********************/
         /**
@@ -69,6 +74,7 @@
                 this.syncInfo.sizeMax = this.sizeMax;
             }
             this.syncInfo.lastSyncDate = {};
+            this.data$ = new Rx.Subject();
             this.init(callBack);
         },
 
@@ -500,7 +506,7 @@
 
                         self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName] ], tx,
                         function() {
-                            //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Updated});
+                            self.data$.onNext({table: tableName, record: reg, operation: 'Updated'});
                             callBack(null, tx);
                         },
                         function(ts, error) {
@@ -623,7 +629,7 @@
 
                             self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName]], tx,
                             function() {
-                                //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
+                                self.data$.onNext({table: tableName, record: reg, operation: 'Inserted' });
                                 callBack ();
                             });
                         }, function (ts, error)  {
@@ -633,7 +639,7 @@
                     } else {
                         self._executeSql(sql, attValue, tx,
                         () => {
-                            //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Inserted});
+                            self.data$.onNext({table: tableName, record: reg, operation: 'Inserted' });
                             callBack (null, tx);
                         },
                         function(ts, error) {
@@ -717,7 +723,7 @@
                     var reg = {};
                     listIdToDelete.forEach( function (x) {
                         reg[idName] = x;
-                        //self.dataObserver.next({table: tableName, record: reg, operation: DataOperation.Deleted});
+                        self.data$.onNext({table: tableName, record: reg, operation: 'Deleted'});
                     });
                     callBack(true);
                 });
