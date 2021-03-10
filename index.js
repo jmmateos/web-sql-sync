@@ -245,15 +245,15 @@
                     self._getDDLTable(curr.tableName, tx, function (ddl) { curr.ddl = ddl; });
                     self._selectSql('SELECT last_sync FROM sync_info where table_name = ?', [curr.tableName], tx, function (res) {
                         if (res.length === 0 || res[0] === 0) { // First sync (or data lost)
-                        if (res.length === 0) {
-                            self._executeSql('INSERT OR REPLACE INTO sync_info (table_name, last_sync) VALUES (?,?)', [curr.tableName, 0], tx);
-                        }
-                        self.firstSync[curr.tableName] = true;
-                        self.syncInfo.lastSyncDate[curr.tableName] = 0;
+                          if (res.length === 0) {
+                              self._executeSql('INSERT OR REPLACE INTO sync_info (table_name, last_sync) VALUES (?,?)', [curr.tableName, 0], tx);
+                          }
+                          self.firstSync[curr.tableName] = true;
+                          self.syncInfo.lastSyncDate[curr.tableName] = 0;
                         } else {
-                        self.firstSync[curr.tableName] = false;
-                        self.syncInfo.lastSyncDate[curr.tableName] = res[0];
-                        if (self.syncInfo.lastSyncDate[curr.tableName] === 0) { self.firstSync[curr.tableName] = true; }
+                          self.firstSync[curr.tableName] = false;
+                          self.syncInfo.lastSyncDate[curr.tableName] = res[0];
+                          if (self.syncInfo.lastSyncDate[curr.tableName] === 0) { self.firstSync[curr.tableName] = true; }
                         }
                     });
                 });
@@ -587,17 +587,17 @@
 
             var counterNbElmTab = 0;
             this.db.transaction ( function (tx)  {
-            if (nb !== 0) {
-                for (var i = 0; i < nb; i++) {
-                self._insertRecord(table.tableName, table.idName, currData[i], tx,function (err)  {
-                    counterNbElmTab++;
-                    if (err) { sqlErrs.push(err); }
-                    if (counterNbElmTab === nb) {
-                    self._finishSync(table.tableName, self.serverData.syncDate, tx);
-                    }
-                });
-                }
-            }
+              if (nb !== 0) {
+                  for (var i = 0; i < nb; i++) {
+                    self._insertRecord(table.tableName, table.idName, currData[i], tx,function (err)  {
+                        counterNbElmTab++;
+                        if (err) { sqlErrs.push(err); }
+                        if (counterNbElmTab === nb) {
+                        self._finishSync(table.tableName, self.serverData.syncDate, tx);
+                        }
+                    });
+                  }
+              } else  { self._finishSync(table.tableName, self.serverData.syncDate, tx); }
             },function (err)  {
             self.log('TransactionError (' + table.tableName + '): ' + err.message);
             sqlErrs.push(err);
