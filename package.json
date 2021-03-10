@@ -1,6 +1,6 @@
 {
   "name": "web-sql-sync",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Sync a local WebSQL DB (SQLite) with a server.",
   "main": "index.js",
   "scripts": {
