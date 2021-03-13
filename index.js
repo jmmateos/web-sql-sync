@@ -87,8 +87,9 @@
         },
         isPending: function (callResult) {
             var self = this, sql = '';
-            if (self.isRunning()) return 1;
-            else {
+            if (self.isRunning()) {
+              callResult(0);
+            } else {
                 var lastSync = this.getLastSyncDate();
                 sql = 'select count(*) from delete_elem where change_time >= ?';
                 self._selectSql(sql, [lastSync], null, function (data) {
@@ -103,6 +104,15 @@
                 });
             }
 
+        },
+
+        pendingModels: function (callResult) {
+          var self = this;
+          if (self.isRunning()) {
+            callResult([]);
+          } else {
+            this._getModelsPendient(callResult);
+          }
         },
 
         getLastSyncDate: function (tableName) {
@@ -194,7 +204,14 @@
 
                 self.syncDate = Math.round(new Date().getTime()/1000.0);
                 self.firstSyncDate = 0;
-                self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
+                if (modelsToSync) {
+                  self._addModelsPendient(modelsToBackup, function () {
+                    self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
+                  });
+                } else {
+                  self._syncNowGo(modelsToBackup, callBackProgress, saveBandwidth);
+                }
+
             } catch (error) {
                 var resultado = {syncOK: false, codeStr: 'noSync', message: 'No Sync yet',
                 nbSent : 0, nbUpdated:0, nbDeleted:0};
@@ -364,6 +381,36 @@
                 });
             });
         },
+        _getModelsPendient: function (callResult) {
+          var self = this;
+          var  sql, pendients = [], lastSync = this.getLastSyncDate();
+          sql = 'select distinct table_name from delete_elem where change_time >= ?';
+          self._selectSql(sql, [lastSync], null, function (data) {
+            for (var i = 0; i < data.length; i++) {
+              pendients.push(data[i]);
+            }
+            sql = 'select distinct table_name from new_elem where change_time >= ?';
+            self._selectSql(sql, [lastSync], null, function (data) {
+              for (var i = 0; i < data.length; i++) {
+                if (pendients.indexOf(data[i]) < 0) {
+                  pendients.push(data[i]);
+                }
+              }
+              callResult(pendients);
+            });
+          });
+      },
+      _addModelsPendient: function (modelsToBck, callBack) {
+        var self = this;
+        self._getModelsPendient(function (modelsPend) {
+          if (modelsPend.length > 0) {
+            modelsPend.forEach(function (elem) {
+              if (modelsToBck.indexOf(elem) < 0) { modelsToBck.push(elem);}
+            });
+            callBack();
+          } else { callBack(); }
+        });
+      },
         _getDataToBackup: function(modelsToBck, dataCallBack) {
             var nbData = 0;
             var self = this;
