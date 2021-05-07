@@ -638,15 +638,19 @@
               var sqlErrs1 = [];
               var counterElem = 0;
               self.db.transaction( function (tx) {
-                datas.forEach(function (datareg, ix) {
-                  self._insertRecord(tableName, tableIdName, datareg, tx, function (err) {
-                    counterElem ++;
-                    if (err) { sqlErrs1.push(err); }
-                    if (ix === datas.length - 1) {
-                      self._finishSync(tableName, self.serverData.syncDate, tx);
-                    }
-                  });
-                });
+                if (datas.length === 0) {
+                    self._finishSync(tableName, self.serverData.syncDate, tx);
+                } else {
+                    datas.forEach(function (datareg, ix) {
+                        self._insertRecord(tableName, tableIdName, datareg, tx, function (err) {
+                            counterElem ++;
+                            if (err) { sqlErrs1.push(err); }
+                            if (ix === datas.length - 1) {
+                            self._finishSync(tableName, self.serverData.syncDate, tx);
+                            }
+                        });
+                    });
+                }
               }, function (err)  {
                 self.log('TransactionError (' + table.tableName + '): ' + err.message);
                 sqlErrs1.push(err);
@@ -658,9 +662,7 @@
               });
             };
 
-            if (nb === 0) {
-              callBack(table, 'updateFirstLocalDb');
-            } else if ( Math.floor(nb/self.segmento) < 1 ) {
+            if ( Math.floor(nb/self.segmento) < 1 ) {
               insertSegmento(table.tableName, table.idName, currData, function (counterNb, errs) {
                 self.syncResult.nbUpdated += counterNb;
                 callBack(table, 'updateFirstLocalDb', errs);
