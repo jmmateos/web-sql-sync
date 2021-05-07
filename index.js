@@ -627,34 +627,67 @@
             var sqlErrs = [], self = this;
             var table = serverData.table;
             var currData = serverData.currData;
+            var currDataRepeat = [];
             var counterNbElm = 0;
             var nb = currData.length;
             counterNbElm += nb;
             this.log('There are ' + nb + ' new elements, in the table ' + table.tableName + ' to save in the local DB');
-
             var counterNbElmTab = 0;
-            this.db.transaction ( function (tx)  {
-              if (nb !== 0) {
-                  for (var i = 0; i < nb; i++) {
-                    self._insertRecord(table.tableName, table.idName, currData[i], tx,function (err)  {
-                        counterNbElmTab++;
-                        if (err) { sqlErrs.push(err); }
-                        if (counterNbElmTab === nb) {
-                        self._finishSync(table.tableName, self.serverData.syncDate, tx);
-                        }
-                    });
-                  }
-              } else  { self._finishSync(table.tableName, self.serverData.syncDate, tx); }
-            },function (err)  {
-            self.log('TransactionError (' + table.tableName + '): ' + err.message);
-            sqlErrs.push(err);
-            self._errorHandler(undefined, err);
-            callBack(table, 'updateFirstLocalDb', sqlErrs);
-            }, function()  {
-            self.syncResult.nbUpdated += counterNbElmTab;
-            if (sqlErrs.length === 0) { callBack(table, 'updateFirstLocalDb'); }  else { callBack(table, 'updateFirstLocalDb', sqlErrs); }
-            });
 
+            var insertSegmento = function (tableName, tableIdName, datas, callBackSeg) {
+              var sqlErrs1 = [];
+              var counterElem = 0;
+              self.db.transaction( function (tx) {
+                datas.forEach(function (datareg, ix) {
+                  self._insertRecord(tableName, tableIdName, datareg, tx, function (err) {
+                    counterElem ++;
+                    if (err) { sqlErrs1.push(err); }
+                    if (ix === datas.length - 1) {
+                      self._finishSync(tableName, self.serverData.syncDate, tx);
+                    }
+                  });
+                });
+              }, function (err)  {
+                self.log('TransactionError (' + table.tableName + '): ' + err.message);
+                sqlErrs1.push(err);
+                self._errorHandler(undefined, err);
+                callBackSeg(counterElem, sqlErrs);
+              }, function()  {
+                self.syncResult.nbUpdated += counterNbElmTab;
+                if (sqlErrs1.length === 0) { callBackSeg(counterElem); }  else { callBackSeg(counterElem, sqlErrs1); }
+              });
+            };
+
+            if (nb === 0) {
+              callBack(table, 'updateFirstLocalDb');
+            } else if ( Math.floor(nb/self.segmento) < 1 ) {
+              insertSegmento(table.tableName, table.idName, currData, function (counterNb, errs) {
+                self.syncResult.nbUpdated += counterNb;
+                callBack(table, 'updateFirstLocalDb', errs);
+              });
+            } else {
+              currData = [];
+              for (var i=0; i < nb; i++) {
+                  currDataRepeat.push(serverData.currData[i]);
+                  if ( (i%self.segmento) === 0 && i !== 0 ) {
+                      currData.push(currDataRepeat);
+                      currDataRepeat = [];
+                  }
+              }
+              currData.push(currDataRepeat);
+              currDataRepeat = [];
+              var nRep = currData.length-1;
+              currData.forEach(function (parcial, ix) {
+                insertSegmento(table.tableName, table.idName, parcial, function (counterNb, errs){
+                  counterNbElmTab += counterNb;
+                  if (errs) { sqlErrs = sqlErrs.concat(errs); }
+                  if (ix === nRep) {
+                    self.syncResult.nbUpdated += counterNbElmTab;
+                    if (sqlErrs.length === 0) { callBack(table, 'updateFirstLocalDb'); }  else { callBack(table, 'updateFirstLocalDb', sqlErrs); }
+                  }
+                });
+              });
+            }
         },
         _insertRecord: function(tableName, idName, reg, tx, callBack) {
             var sql, self = this;
