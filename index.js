@@ -91,19 +91,11 @@
               callResult(0);
             } else {
                 var lastSync = this.getLastSyncDate();
-                sql = 'select count(*) from delete_elem where change_time >= ?';
+                sql = 'select count(*) from _change_elem where change_time >= ?';
                 self._selectSql(sql, [lastSync], null, function (data) {
-                    if (data[0] > 0) callResult(1);
-                    else {
-                    sql = 'select count(*) from new_elem where change_time >= ?';
-                    self._selectSql(sql, [lastSync], null, function (data) {
-                            if (data[0] > 0) callResult(1);
-                            else callResult(0);
-                        });
-                    }
+                    if (data[0] > 0) { callResult(1); } else { callResult(0); }
                 });
             }
-
         },
 
         pendingModels: function (callResult) {
@@ -138,7 +130,7 @@
         setSyncDate: function(tableName, val) {
             if (this.syncInfo.lastSyncDate.hasOwnProperty(tableName)) {
                 this.syncInfo.lastSyncDate[tableName] = val;
-                this._executeSql('UPDATE sync_info SET last_sync = ? where table_name = ?', [val, tableName]);
+                this._executeSql('UPDATE _sync_info SET last_sync = ? where table_name = ?', [val, tableName]);
             } else {
                 throw new Error(tableName + ' not found.');
             }
@@ -236,34 +228,32 @@
             }
 
             this.db.transaction(function (tx)  {
-                self._executeSql('CREATE TABLE IF NOT EXISTS new_elem (table_name TEXT NOT NULL, id TEXT NOT NULL, ' +
-                    'change_time TIMESTAMP NOT NULL DEFAULT  (strftime(\'%s\',\'now\')));', [], tx);
-                self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_newElem on new_elem (table_name)');
-                self._executeSql('CREATE TABLE IF NOT EXISTS delete_elem (table_name TEXT NOT NULL, id TEXT NOT NULL, ' +
-                    'change_time TIMESTAMP NOT NULL DEFAULT  (strftime(\'%s\',\'now\')));', [], tx);
-                self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_deleteElem on delete_elem (table_name)');
-                self._executeSql('CREATE TABLE IF NOT EXISTS sync_info (table_name TEXT NOT NULL, last_sync TIMESTAMP);', [], tx);
+                self._executeSql('CREATE TABLE IF NOT EXISTS _change_elem (table_name TEXT NOT NULL, id TEXT NOT NULL, oper TEXT NOT NULL, ' +
+                    'change_time TIMESTAMP NOT NULL DEFAULT  (strftime(\'%s\',\'now\')), data TEXT NULL);', [], tx);
+                self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_changeElem on _change_elem (table_name)');
+                self._executeSql('CREATE TABLE IF NOT EXISTS _sync_info (table_name TEXT NOT NULL, last_sync TIMESTAMP);', [], tx);
+                self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_syncInfo on _sync_info (table_name)');
 
-                // create triggers to automatically fill the new_elem table (this table will contains a pointer to all the modified data)
+                // create triggers to automatically fill the _change_elem table (this table will contains a pointer to all the modified data)
                 self.tablesToSync.forEach(function(curr)  {
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS update_' + curr.tableName + '  AFTER UPDATE ON ' + curr.tableName + ' ' +
-                                'WHEN (SELECT last_sync FROM sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
-                                'BEGIN INSERT INTO new_elem (table_name, id) VALUES ' +
-                                '("' + curr.tableName + '", new.' + curr.idName + '); END;', [], tx);
+                                'WHEN (SELECT last_sync FROM _sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
+                                'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
+                                '("' + curr.tableName + '", new.' + curr.idName + ', \'U\'); END;', [], tx);
 
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS insert_' + curr.tableName + '  AFTER INSERT ON ' + curr.tableName + ' ' +
-                                'WHEN (SELECT last_sync FROM sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
-                                'BEGIN INSERT INTO new_elem (table_name, id) VALUES ' +
-                                '("' + curr.tableName + '", new.' + curr.idName + '); END;', [], tx);
+                                'WHEN (SELECT last_sync FROM _sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
+                                'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
+                                '("' + curr.tableName + '", new.' + curr.idName + ', \'I\'); END;', [], tx);
 
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS delete_' + curr.tableName + '  AFTER DELETE ON ' + curr.tableName + ' ' +
-                                'BEGIN INSERT INTO delete_elem (table_name, id) VALUES ' +
-                                '("' + curr.tableName + '", old.' + curr.idName + '); END;', [], tx);
+                                'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
+                                '("' + curr.tableName + '", old.' + curr.idName + ', \'D\'); END;', [], tx);
                     self._getDDLTable(curr.tableName, tx, function (ddl) { curr.ddl = ddl; });
-                    self._selectSql('SELECT last_sync FROM sync_info where table_name = ?', [curr.tableName], tx, function (res) {
+                    self._selectSql('SELECT last_sync FROM _sync_info where table_name = ?', [curr.tableName], tx, function (res) {
                         if (res.length === 0 || res[0] === 0) { // First sync (or data lost)
                           if (res.length === 0) {
-                              self._executeSql('INSERT OR REPLACE INTO sync_info (table_name, last_sync) VALUES (?,?)', [curr.tableName, 0], tx);
+                              self._executeSql('INSERT OR REPLACE INTO _sync_info (table_name, last_sync) VALUES (?,?)', [curr.tableName, 0], tx);
                           }
                           self.firstSync[curr.tableName] = true;
                           self.syncInfo.lastSyncDate[curr.tableName] = 0;
@@ -384,20 +374,12 @@
         _getModelsPendient: function (callResult) {
           var self = this;
           var  sql, pendients = [], lastSync = this.getLastSyncDate();
-          sql = 'select distinct table_name from delete_elem where change_time >= ?';
+          sql = 'select distinct table_name from _change_elem where change_time >= ?';
           self._selectSql(sql, [lastSync], null, function (data) {
             for (var i = 0; i < data.length; i++) {
               pendients.push(data[i]);
             }
-            sql = 'select distinct table_name from new_elem where change_time >= ?';
-            self._selectSql(sql, [lastSync], null, function (data) {
-              for (var i = 0; i < data.length; i++) {
-                if (pendients.indexOf(data[i]) < 0) {
-                  pendients.push(data[i]);
-                }
-              }
-              callResult(pendients);
-            });
+            callResult(pendients);
           });
       },
       _addModelsPendient: function (modelsToBck, callBack) {
@@ -451,35 +433,26 @@
             var self = this;
             this.firstSync[tableName] = false;
             self.syncInfo.lastSyncDate[tableName] = syncDate;
-            self._executeSql('UPDATE sync_info SET last_sync = ? where  table_name = ?', [syncDate, tableName], tx);
-            // Remove only the elem sent to the server (in case new_elem has been added during the sync)
-            // We don't do that anymore: this._executeSql('DELETE FROM new_elem', [], tx);
+            self._executeSql('UPDATE _sync_info SET last_sync = ? where  table_name = ?', [syncDate, tableName], tx);
+            // Remove only the elem sent to the server (in case _change_elem has been added during the sync)
+            // We don't do that anymore: this._executeSql('DELETE FROM _change_elem', [], tx);
 
             if (self.clientData.data.hasOwnProperty(tableName)) {
-                var idsNewToDelete = [];
-                var idsDelToDelete = [];
+                var idsToDelete = [];
                 var idsString = '';
                 var idName =  self.idNameFromTableName[tableName];
                 self.clientData.data[tableName].forEach(function (reg) {
-                    if (reg.TipoOper === 'U') {
-                        idsNewToDelete.push(reg[idName]);
+                    if (reg.TipoOper === 'U' || reg.TipoOper === 'I') {
+                      idsToDelete.push(reg[idName]);
                     } else {
-                        idsDelToDelete.push(reg.IdOper);
+                      idsToDelete.push(reg.IdOper);
                     }
                 });
-                if (idsNewToDelete.length > 0) {
-                idsString = idsNewToDelete.map(function(x) { return '?'; }).join(',');
-                self._executeSql('DELETE FROM new_elem WHERE table_name =\'' +tableName + '\'' +
+                idsString = idsToDelete.map(function(x) { return '?'; }).join(',');
+                self._executeSql('DELETE FROM _change_elem WHERE table_name =\'' +tableName + '\'' +
                     ' AND id IN (' + idsString + ')' +
-                    ' AND change_time <= ' + syncDate, idsNewToDelete, tx);
-                }
+                    ' AND change_time <= ' + syncDate, idsToDelete, tx);
 
-                if (idsDelToDelete.length > 0) {
-                idsString = idsDelToDelete.map(function(x) { return '?'; }).join(',');
-                self._executeSql('DELETE FROM delete_elem WHERE table_name =\'' +tableName + '\'' +
-                    ' AND id IN (' + idsString + ')' +
-                    ' AND change_time <= ' + syncDate, idsDelToDelete, tx);
-                }
             }
         },
         _getTableToProcess: function(tableName) {
@@ -495,37 +468,39 @@
             return result;
         },
         _getDataToSavDel: function (tableName, idName, needAllData, tx, dataCallBack) {
-            var sql = 'select distinct op.TipoOper, op.IdOper , c.* ' +
+            var sql = 'select distinct op.TipoOper, op.IdOper, op.data , c.* ' +
             'from ( ' +
-            'select id IdOper, "U" TipoOper, change_time ' +
-            'from new_elem ' +
-            'where table_name= ? AND change_time <= ? ' +
-            ' union ALL ' +
-            'select id IdOper, "D" TipoOper, change_time ' +
-            'from delete_elem ' +
+            'select id IdOper, oper TipoOper, data , change_time ' +
+            'from _change_elem ' +
             'where table_name= ? AND change_time <= ? ' +
             ' order by change_time) op ' +
             'left join ' + tableName + ' c on c.' + idName + ' = op.IdOper ' +
             'where (TipoOper="U" and ' + idName + ' is not null) or TipoOper="D" ' +
-            'order by change_time, TipoOper';
+            'order by change_time, case when TipoOper = \'I\' then 1 ' +
+            ' when TipoOper = \'U\' then 2 when TipoOper = \'D\' then 3 end' ;
 
-            this._selectSql(sql, [tableName, this.syncDate, tableName, this.syncDate], tx, dataCallBack);
+            this._selectSql(sql, [tableName, this.syncDate, tableName, this.syncDate], tx, function(data) {
+              var result = data.map(function (elem) {
+                if (elem.TipoOper === 'I') {
+                  var data = JSON.parse(elem.data);
+                  Object.keys(data).forEach(function (field) {
+                    if (elem.getOwnPropertyDescriptor[field]) {
+                      elem[field] = data[field];
+                    }
+                  });
+                }
+                delete elem.data;
+                return elem;
+              });
+              dataCallBack(result);
+            });
         },
-        _getDataToDelete: function (tableName, tx, dataCallBack) {
-            var sql = 'select distinct id FROM delete_elem' +
-                ' WHERE table_name = ? AND change_time <= ?' +
-                ' ORDER BY change_time ';
-            this._selectSql(sql, [tableName, this.syncDate], tx, dataCallBack);
-        },
+
         _detectConflict: function(tableName, idValue, tx, callBack)  {
             var sql, self = this;
             if (!this.firstSync[tableName]) {
-                sql = 'select DISTINCT id FROM new_elem ' +
-                    ' WHERE table_name = ?  AND id = ? AND change_time > ? ' +
-                    ' UNION ALL ' +
-                    'select DISTINCT id FROM delete_elem ' +
-                    ' WHERE table_name = ? AND id = ? AND change_time > ?';
-
+                sql = 'select DISTINCT id FROM _change_elem ' +
+                    ' WHERE table_name = ?  AND id = ? AND change_time > ? ';
                 self._selectSql(sql, [tableName, idValue, self.syncDate, tableName, idValue, self.syncDate], tx,
                 function(exists) {
                     if (exists.length) { callBack(true); } else { callBack(false); }
@@ -546,9 +521,9 @@
                     var attValue = self._getMembersValue(reg, attList);
                     attValue.push(reg[idName]);
                     self._executeSql(sql, attValue, tx, function() {
-                        sql = 'DELETE FROM new_elem WHERE ' +
+                        sql = 'DELETE FROM _change_elem WHERE ' +
                             'table_name = ? AND id = ? AND ' +
-                            'change_time = (select MAX(change_time) FROM new_elem  ' +
+                            'change_time = (select MAX(change_time) FROM _change_elem  ' +
                             'WHERE table_name = ?  AND id = ?) ';
 
                         self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName] ], tx,
@@ -704,9 +679,9 @@
                     var attValue = self._getMembersValue(reg, attList);
                     if (!self.firstSync[tableName]) {
                         self._executeSql(sql, attValue, tx, () => {
-                            sql = 'DELETE FROM new_elem WHERE ' +
+                            sql = 'DELETE FROM _change_elem WHERE ' +
                                 'table_name = ? AND id = ? AND ' +
-                                'change_time = (select MAX(change_time) FROM new_elem WHERE ' +
+                                'change_time = (select MAX(change_time) FROM _change_elem WHERE ' +
                                 'table_name = ? AND id = ?) ';
 
                             self._executeSql(sql, [tableName, reg[idName], tableName, reg[idName]], tx,
