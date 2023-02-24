@@ -236,19 +236,35 @@
 
                 // create triggers to automatically fill the _change_elem table (this table will contains a pointer to all the modified data)
                 self.tablesToSync.forEach(function(curr)  {
+                  self._getListColumns(curr.tableName, tx, function(listColumns) {
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS update_' + curr.tableName + '  AFTER UPDATE ON ' + curr.tableName + ' ' +
                                 'WHEN (SELECT last_sync FROM _sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
                                 'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
                                 '("' + curr.tableName + '", new.' + curr.idName + ', \'U\'); END;', [], tx);
 
+                    var dataInsert = '\'{\' ||'.concat(
+                      listColumns.map(function(col) {
+                        return 'case when new.'.concat(col.column, ' is null then \'"',col.column, '": null \' else ',
+                          '\'"',col.column, '":', (col.quoted?'"':''),'\' || new.',col.column,(col.quoted?' || \'"\' ':' || \'\''), ' end');
+                        }).join(' || \',\' || '),' || \'}\''
+                    );
+
                     self._executeSql('CREATE TRIGGER IF NOT EXISTS insert_' + curr.tableName + '  AFTER INSERT ON ' + curr.tableName + ' ' +
                                 'WHEN (SELECT last_sync FROM _sync_info where table_name = \'' +  curr.tableName + '\') > 0 ' +
-                                'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
-                                '("' + curr.tableName + '", new.' + curr.idName + ', \'I\'); END;', [], tx);
+                                'BEGIN INSERT INTO _change_elem (table_name, id, oper, data) VALUES ' +
+                                '(\'' + curr.tableName + '\', new.' + curr.idName + ', \'I\',' + dataInsert + ' ); END;', [], tx);
 
-                    self._executeSql('CREATE TRIGGER IF NOT EXISTS delete_' + curr.tableName + '  AFTER DELETE ON ' + curr.tableName + ' ' +
-                                'BEGIN INSERT INTO _change_elem (table_name, id, oper) VALUES ' +
-                                '("' + curr.tableName + '", old.' + curr.idName + ', \'D\'); END;', [], tx);
+                    var dataDelete =  '\'{\' ||'.concat(
+                      listColumns.map(function(col) {
+                        return 'case when old.'.concat(col.column, ' is null then \'"',col.column, '": null \' else ',
+                          '\'"',col.column, '":', (col.quoted?'"':''),'\' || old.',col.column,(col.quoted?' || \'"\' ':' || \'\''), ' end');
+                      }).join(' || \',\' || '),' || \'}\''
+                    );
+
+                    self._executeSql('CREATE TRIGGER IF NOT EXISTS delete_' + curr.tableName + '  BEFORE DELETE ON ' + curr.tableName + ' ' +
+                                'BEGIN INSERT INTO _change_elem (table_name, id, oper, data) VALUES ' +
+                                '(\'' + curr.tableName + '\', old.' + curr.idName + ', \'D\',' + dataDelete + ' ); END;', [], tx);
+
                     self._getDDLTable(curr.tableName, tx, function (ddl) { curr.ddl = ddl; });
                     self._selectSql('SELECT last_sync FROM _sync_info where table_name = ?', [curr.tableName], tx, function (res) {
                         if (res.length === 0 || res[0] === 0) { // First sync (or data lost)
@@ -263,6 +279,7 @@
                           if (self.syncInfo.lastSyncDate[curr.tableName] === 0) { self.firstSync[curr.tableName] = true; }
                         }
                     });
+                  });
                 });
 
             }, function(err) {
@@ -468,18 +485,14 @@
             return result;
         },
         _getDataToSavDel: function (tableName, idName, needAllData, tx, dataCallBack) {
-            var sql = 'select distinct op.TipoOper, op.IdOper, op.data , c.* ' +
-            'from ( ' +
-            'select id IdOper, oper TipoOper, data , change_time ' +
-            'from _change_elem ' +
-            'where table_name= ? AND change_time <= ? ' +
-            ' order by change_time) op ' +
-            'left join ' + tableName + ' c on c.' + idName + ' = op.IdOper ' +
-            'where (TipoOper="U" and ' + idName + ' is not null) or TipoOper="D" ' +
-            'order by change_time, case when TipoOper = \'I\' then 1 ' +
-            ' when TipoOper = \'U\' then 2 when TipoOper = \'D\' then 3 end' ;
+          var sql = 'select distinct op.oper TipoOper, op.id IdOper, op.data, op.change_time DateOper, c.* ' +
+          'from _change_elem op ' +
+          'left join ' + tableName + ' c on c.' + idName + ' = op.id ' +
+          'where op.table_name= ? AND op.change_time <= ? ' +
+          'order by op.change_time, case when op.oper = \'I\' then 1 ' +
+          ' when op.oper = \'U\' then 2 when op.oper = \'D\' then 3 end' ;
 
-            this._selectSql(sql, [tableName, this.syncDate, tableName, this.syncDate], tx, function(data) {
+            this._selectSql(sql, [tableName, this.syncDate], tx, function(data) {
               var result = data.map(function (elem) {
                 if (elem.TipoOper === 'I') {
                   var data = JSON.parse(elem.data);
@@ -501,7 +514,7 @@
             if (!this.firstSync[tableName]) {
                 sql = 'select DISTINCT id FROM _change_elem ' +
                     ' WHERE table_name = ?  AND id = ? AND change_time > ? ';
-                self._selectSql(sql, [tableName, idValue, self.syncDate, tableName, idValue, self.syncDate], tx,
+                self._selectSql(sql, [tableName, idValue, self.syncDate], tx,
                 function(exists) {
                     if (exists.length) { callBack(true); } else { callBack(false); }
                 });
@@ -1072,6 +1085,22 @@
         _getDDLTable: function(table, optionalTransaction, callback) {
             var sql = 'select sql from sqlite_master where type=\'table\' and name=\'' + table + '\'';
             this._selectSql(sql, [], optionalTransaction, function(rs) { callback(rs[0]); });
+        },
+        _getListColumns: function (table, optionalTransaction, callback) {
+          var self = this;
+          this._getDDLTable(table, optionalTransaction, function(ddl) {
+            var regexlistColumns = /([A-Z0-9_]+\s+[A-Z0-9_]+\,)+/gi, regexColumns = /([A-Z0-9_]+)\s+([A-Z0-9_]+)\,/gi;
+            var listColumns = regexlistColumns.exec(ddl);
+            if (!listColumns) { throw new Error('regex: Imposible obtener la lista de campos.'); }
+            var result = [], match;
+            while ((match = regexColumns.exec(listColumns[0])) !== null) {
+              var column = match[1], type = match[2];
+              var quoted = false;
+              if (type.toLowerCase() === 'text') { quoted = true; }
+              result.push({ column: column, quoted: quoted });
+            }
+            callback(result);
+          });
         },
         checkModelsList: function(tableList) {
             var listToCheck = [];
