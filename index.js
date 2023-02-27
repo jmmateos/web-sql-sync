@@ -486,18 +486,21 @@
         },
         _getDataToSavDel: function (tableName, idName, needAllData, tx, dataCallBack) {
           var sql = 'select distinct op.oper TipoOper, op.id IdOper, op.data, op.change_time DateOper, c.* ' +
-          'from _change_elem op ' +
+          'from ( select op.oper, op.id, max(op.change_time) change_time from  _change_elem op ' +
+          'where op.table_name= ? AND op.change_time <= ? group by op.oper, op.id) opmod ' +
+          'inner join _change_elem op on op.oper = opmod.oper and op.id = opmod.id ' +
+          '   and op.change_time = opmod.change_time ' +
           'left join ' + tableName + ' c on c.' + idName + ' = op.id ' +
           'where op.table_name= ? AND op.change_time <= ? ' +
           'order by op.change_time, case when op.oper = \'I\' then 1 ' +
           ' when op.oper = \'U\' then 2 when op.oper = \'D\' then 3 end' ;
 
-            this._selectSql(sql, [tableName, this.syncDate], tx, function(data) {
+            this._selectSql(sql, [tableName, this.syncDate, tableName, this.syncDate], tx, function(data) {
               var result = data.map(function (elem) {
-                if (elem.TipoOper === 'I') {
+                if (elem.TipoOper === 'I' || elem.TipoOper === 'D') {
                   var data = JSON.parse(elem.data);
                   Object.keys(data).forEach(function (field) {
-                    if (elem.getOwnPropertyDescriptor[field]) {
+                    if (Object.getOwnPropertyDescriptor(elem,field)) {
                       elem[field] = data[field];
                     }
                   });
@@ -787,7 +790,8 @@
             var  sql = 'delete from ' + tableName + ' WHERE ' + idName + ' IN (' +
                 listIdToDelete.map(function (x) { return '?'; }).join(',') + ')';
             this._executeSql(sql, listIdToDelete, tx, function()  {
-                sql = 'delete from delete_elem WHERE table_name = "' + tableName +'" and id  IN (' +
+                sql = 'delete from _change_elem WHERE table_name = "' + tableName +
+                  '" and oper = \'D\' and id  IN (' +
                     listIdToDelete.map(function (x) { return '?'; }).join(',') + ')';
                 self._executeSql(sql, listIdToDelete, tx, function()  {
                     var reg = {};
