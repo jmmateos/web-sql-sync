@@ -231,8 +231,7 @@
                 self._executeSql('CREATE TABLE IF NOT EXISTS _change_elem (table_name TEXT NOT NULL, id TEXT NOT NULL, oper TEXT NOT NULL, ' +
                     'change_time TIMESTAMP NOT NULL DEFAULT  (strftime(\'%s\',\'now\')), data TEXT NULL);', [], tx);
                 self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_changeElem on _change_elem (table_name)');
-                self._executeSql('CREATE TABLE IF NOT EXISTS _sync_info (table_name TEXT NOT NULL, last_sync TIMESTAMP);', [], tx);
-                self._executeSql('CREATE INDEX IF NOT EXISTS index_tableName_syncInfo on _sync_info (table_name)');
+                self._executeSql('CREATE TABLE IF NOT EXISTS _sync_info (table_name TEXT NOT NULL  primary key, last_sync TIMESTAMP);', [], tx);
 
                 // create triggers to automatically fill the _change_elem table (this table will contains a pointer to all the modified data)
                 self.tablesToSync.forEach(function(curr)  {
@@ -485,6 +484,7 @@
             return result;
         },
         _getDataToSavDel: function (tableName, idName, needAllData, tx, dataCallBack) {
+          var operDeleteExists = [];
           var sql = 'select distinct op.oper TipoOper, op.id IdOper, op.data, op.change_time DateOper, c.* ' +
           'from ( select op.oper, op.id, max(op.change_time) change_time from  _change_elem op ' +
           'where op.table_name= ? AND op.change_time <= ? group by op.oper, op.id) opmod ' +
@@ -497,6 +497,7 @@
 
             this._selectSql(sql, [tableName, this.syncDate, tableName, this.syncDate], tx, function(data) {
               var result = data.map(function (elem) {
+                if (elem.TipoOper === 'D') { operDeleteExists.push(elem.IdOper);}
                 if (elem.TipoOper === 'I' || elem.TipoOper === 'D') {
                   var data = JSON.parse(elem.data);
                   Object.keys(data).forEach(function (field) {
@@ -508,6 +509,12 @@
                 delete elem.data;
                 return elem;
               });
+              if (operDeleteExists.length) { // si existe una operación de borrado, descartamos el resto (I, U).
+                result = result.reduce(function (acum, elem){
+                  if (!(elem.TipoOper !== 'D' && operDeleteExists.includes(elem.IdOper))) { acum.push(elem); }
+                  return acum;
+                },[]);
+              }
               dataCallBack(result);
             });
         },
